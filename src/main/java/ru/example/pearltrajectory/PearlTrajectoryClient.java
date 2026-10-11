@@ -55,10 +55,7 @@ public class PearlTrajectoryClient implements ClientModInitializer {
             points = List.of();
             return;
         }
-            points = List.of();
-            return;
-        }
-
+        
         float delta = context.tickCounter().getGameTimeDeltaPartialTick(true);
         points = simulate(level, player, delta);
     }
