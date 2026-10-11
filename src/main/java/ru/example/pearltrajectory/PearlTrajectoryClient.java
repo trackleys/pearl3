@@ -43,7 +43,18 @@ public class PearlTrajectoryClient implements ClientModInitializer {
                 && (player.getMainHandItem().is(Items.ENDER_PEARL)
                     || player.getOffhandItem().is(Items.ENDER_PEARL));
 
-        if (player == null || level == null || !holdingPearl) {
+        if (player == null) {
+            points = List.of();
+            return;
+        }
+        if (level == null) {
+            points = List.of();
+            return;
+        }
+        if (!holdingPearl) {
+            points = List.of();
+            return;
+        }
             points = List.of();
             return;
         }
