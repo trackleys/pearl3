@@ -23,6 +23,9 @@ import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 
 public class PearlTrajectoryClient implements ClientModInitializer {
+    // Размер точки траектории (половина стороны кубика)
+    private static final double DOT_RADIUS = 0.03;
+
     // Точки траектории, посчитанные в фазе извлечения (extraction)
     private static List<Vec3> points = List.of();
 
@@ -32,7 +35,7 @@ public class PearlTrajectoryClient implements ClientModInitializer {
         WorldRenderEvents.BEFORE_TRANSLUCENT.register(PearlTrajectoryClient::renderTrajectory);
     }
 
-    // ---------- Фаза извлечения: считаем траекторию (здесь можно трогать мир) ----------
+    // ---------- Фаза извлечения: считаем траекторию ----------
 
     private static void extractTrajectory(WorldExtractionContext context) {
         Minecraft mc = Minecraft.getInstance();
@@ -55,7 +58,7 @@ public class PearlTrajectoryClient implements ClientModInitializer {
             points = List.of();
             return;
         }
-        
+
         float delta = context.tickCounter().getGameTimeDeltaPartialTick(true);
         points = simulate(level, player, delta);
     }
@@ -87,7 +90,7 @@ public class PearlTrajectoryClient implements ClientModInitializer {
         return result;
     }
 
-    // ---------- Фаза отрисовки: рисуем белую линию ----------
+    // ---------- Фаза отрисовки: белая линия из маленьких кубиков ----------
 
     private static void renderTrajectory(WorldRenderContext context) {
         if (points.size() < 2) {
@@ -99,13 +102,51 @@ public class PearlTrajectoryClient implements ClientModInitializer {
         matrices.pushPose();
         matrices.translate(-camera.x, -camera.y, -camera.z);
 
-        // debugLineStrip — линии, видные сквозь блоки (как F3-границы чанков)
-        VertexConsumer buffer = context.consumers().getBuffer(RenderTypes.debugLineStrip());
+        VertexConsumer buffer = context.consumers().getBuffer(RenderTypes.debugFilledBox());
         Matrix4f matrix = matrices.last().pose();
         for (Vec3 p : points) {
-            buffer.addVertex(matrix, (float) p.x, (float) p.y, (float) p.z).setColor(0xFFFFFFFF);
+            drawDot(buffer, matrix, p);
         }
-
         matrices.popPose();
+    }
+
+    private static void drawDot(VertexConsumer buffer, Matrix4f matrix, Vec3 center) {
+        float minX = (float) (center.x - DOT_RADIUS);
+        float minY = (float) (center.y - DOT_RADIUS);
+        float minZ = (float) (center.z - DOT_RADIUS);
+        float maxX = (float) (center.x + DOT_RADIUS);
+        float maxY = (float) (center.y + DOT_RADIUS);
+        float maxZ = (float) (center.z + DOT_RADIUS);
+
+        // Front
+        buffer.addVertex(matrix, minX, minY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, minY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, maxY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, maxY, minZ).setColor(0xFFFFFFFF);
+        // Back
+        buffer.addVertex(matrix, maxX, minY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, minY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, maxY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, maxY, maxZ).setColor(0xFFFFFFFF);
+        // Left
+        buffer.addVertex(matrix, minX, minY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, minY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, maxY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, maxY, maxZ).setColor(0xFFFFFFFF);
+        // Right
+        buffer.addVertex(matrix, maxX, minY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, minY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, maxY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, maxY, minZ).setColor(0xFFFFFFFF);
+        // Top
+        buffer.addVertex(matrix, minX, maxY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, maxY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, maxY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, maxY, maxZ).setColor(0xFFFFFFFF);
+        // Bottom
+        buffer.addVertex(matrix, minX, minY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, minY, maxZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, maxX, minY, minZ).setColor(0xFFFFFFFF);
+        buffer.addVertex(matrix, minX, minY, minZ).setColor(0xFFFFFFFF);
     }
 }
