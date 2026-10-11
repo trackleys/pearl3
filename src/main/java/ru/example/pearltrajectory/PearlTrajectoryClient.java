@@ -2,30 +2,15 @@ package ru.example.pearltrajectory;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
-import java.util.OptionalDouble;
 
-import com.mojang.blaze3d.PrimitiveTopology;
-import com.mojang.blaze3d.buffers.GpuBufferSlice;
-import com.mojang.blaze3d.pipeline.RenderPass;
-import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.pipeline.RenderTarget;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import org.joml.Matrix4f;
-import org.joml.Vector3f;
-import org.joml.Vector4f;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.StagedVertexBuffer;
-import net.minecraft.client.renderer.rendertype.RenderType;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ClipContext;
@@ -33,40 +18,23 @@ import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionContext;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelExtractionEvents;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderContext;
-import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 
 public class PearlTrajectoryClient implements ClientModInitializer {
-    private static final String MOD_ID = "pearltrajectory";
-
-    // Пайплайн для белых линий. Пустой depth-stencil state = depth-тест выключен,
-    // линия видна сквозь блоки.
-    private static final RenderPipeline LINES_PIPELINE = RenderPipelines.register(
-            RenderPipeline.builder(RenderPipelines.LINES_SNIPPET)
-                    .withLocation(ResourceLocation.fromNamespaceAndPath(MOD_ID, "trajectory_lines"))
-                    .withDepthStencilState(Optional.empty())
-                    .build());
-
-    private static final Vector4f COLOR_MODULATOR = new Vector4f(1f, 1f, 1f, 1f);
-    private static final Vector3f MODEL_OFFSET = new Vector3f();
-    private static final Matrix4f TEXTURE_MATRIX = new Matrix4f();
-    private static final StagedVertexBuffer STAGED_BUFFER =
-            new StagedVertexBuffer(() -> "Pearl Trajectory Buffer", RenderType.SMALL_BUFFER_SIZE);
-
-    // Точки траектории, посчитанные в фазе извлечения (extraction) данных.
+    // Точки траектории, посчитанные в фазе извлечения (extraction)
     private static List<Vec3> points = List.of();
 
     @Override
     public void onInitializeClient() {
-        LevelExtractionEvents.END_EXTRACTION.register(PearlTrajectoryClient::extractTrajectory);
-        LevelRenderEvents.AFTER_TRANSLUCENT_TERRAIN.register(PearlTrajectoryClient::renderTrajectory);
+        WorldRenderEvents.END_EXTRACTION.register(PearlTrajectoryClient::extractTrajectory);
+        WorldRenderEvents.BEFORE_TRANSLUCENT.register(PearlTrajectoryClient::renderTrajectory);
     }
 
     // ---------- Фаза извлечения: считаем траекторию (здесь можно трогать мир) ----------
 
-    private static void extractTrajectory(LevelExtractionContext context) {
+    private static void extractTrajectory(WorldExtractionContext context) {
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
         ClientLevel level = mc.level;
@@ -75,12 +43,12 @@ public class PearlTrajectoryClient implements ClientModInitializer {
                 && (player.getMainHandItem().is(Items.ENDER_PEARL)
                     || player.getOffhandItem().is(Items.ENDER_PEARL));
 
-        if (player == null || level == null || !holdingPearl) {
+        if (player == null  level == null  !holdingPearl) {
             points = List.of();
             return;
         }
 
-        float delta = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+        float delta = context.tickCounter().getGameTimeDeltaPartialTick(true);
         points = simulate(level, player, delta);
     }
 
@@ -111,73 +79,25 @@ public class PearlTrajectoryClient implements ClientModInitializer {
         return result;
     }
 
-    // ---------- Фаза отрисовки: рисуем линию (только render state, мир не трогаем) ----------
+    // ---------- Фаза отрисовки: рисуем белую линию ----------
 
-    private static void renderTrajectory(LevelRenderContext context) {
+    private static void renderTrajectory(WorldRenderContext context) {
         if (points.size() < 2) {
             return;
         }
 
-        VertexFormat format = LINES_PIPELINE.getVertexFormatBinding(0);
-        PrimitiveTopology topology = LINES_PIPELINE.getPrimitiveTopology();
-        StagedVertexBuffer.Draw draw = STAGED_BUFFER.appendDraw(format, topology, null);
-
-        PoseStack matrices = context.poseStack();
-        Vec3 camera = context.levelState().cameraRenderState.pos;
+        Vec3 camera = context.worldState().cameraRenderState.pos;
+        PoseStack matrices = context.matrices();
         matrices.pushPose();
         matrices.translate(-camera.x, -camera.y, -camera.z);
 
-        VertexConsumer builder = STAGED_BUFFER.getVertexBuilder(draw);
+        // debugLineStrip — линии, видные сквозь блоки (как F3-границы чанков)
+        VertexConsumer buffer = context.consumers().getBuffer(RenderTypes.debugLineStrip());
         Matrix4f matrix = matrices.last().pose();
-
-        if (topology == PrimitiveTopology.LINE_STRIP) {
-            // Каждая точка добавляется один раз, линии соединяют соседние точки
-            for (Vec3 p : points) {
-                builder.addVertex(matrix, (float) p.x, (float) p.y, (float) p.z)
-                        .setColor(1f, 1f, 1f, 1f);
-            }
-        } else {
-            // LINE_LIST: нужно добавлять точки парами
-            for (int i = 0; i < points.size() - 1; i++) {
-                Vec3 a = points.get(i);
-                Vec3 b = points.get(i + 1);
-                builder.addVertex(matrix, (float) a.x, (float) a.y, (float) a.z)
-                        .setColor(1f, 1f, 1f, 1f);
-                builder.addVertex(matrix, (float) b.x, (float) b.y, (float) b.z)
-                        .setColor(1f, 1f, 1f, 1f);
-            }
+        for (Vec3 p : points) {
+            buffer.addVertex(matrix, (float) p.x, (float) p.y, (float) p.z).setColor(0xFFFFFFFF);
         }
+
         matrices.popPose();
-
-        STAGED_BUFFER.upload();
-        StagedVertexBuffer.ExecuteInfo info = STAGED_BUFFER.getExecuteInfo(draw);
-        if (info != null) {
-            drawBuffer(Minecraft.getInstance(), info);
-        }
-        STAGED_BUFFER.endFrame();
-    }
-
-    private static void drawBuffer(Minecraft mc, StagedVertexBuffer.ExecuteInfo info) {
-        GpuBufferSlice dynamicTransforms = RenderSystem.getDynamicUniforms()
-                .writeTransform(RenderSystem.getModelViewMatrixCopy(),
-                        COLOR_MODULATOR, MODEL_OFFSET, TEXTURE_MATRIX);
-
-        RenderTarget mainTarget = mc.gameRenderer.mainRenderTarget();
-        GpuTextureView colorTexture = mainTarget.getColorTextureView();
-        if (colorTexture == null) {
-            return;
-        }
-
-        try (RenderPass renderPass = RenderSystem.getDevice().createCommandEncoder()
-                .createRenderPass(() -> MOD_ID + " trajectory rendering",
-                        colorTexture, Optional.empty(),
-                        mainTarget.getDepthTextureView(), OptionalDouble.empty())) {
-            renderPass.setPipeline(LINES_PIPELINE);
-            RenderSystem.bindDefaultUniforms(renderPass);
-            renderPass.setUniform("DynamicTransforms", dynamicTransforms);
-            renderPass.setVertexBuffer(0, info.vertexBuffer().slice());
-            renderPass.setIndexBuffer(info.indexBuffer(), info.indexType());
-            renderPass.drawIndexed(info.indexCount(), 0, 0, 0);
-        }
     }
 }
